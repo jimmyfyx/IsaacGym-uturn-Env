@@ -21,12 +21,9 @@ class Simulator:
         self.randomizer = None
         self.recorder = None
 
-    def run_simulator(self, env_idx):
+    def run_simulator(self, env_idx, gym, headless):
         """The main function to run simulator
         """
-        gym = gymapi.acquire_gym()  # Initialize gym
-        args = gymutil.parse_arguments(description="terrasentia_env")  # Parse arguments
-
         # Create Simulation
         sim_params = gymapi.SimParams()
         sim_params.dt = dt = 1.0 / 60.0
@@ -52,6 +49,16 @@ class Simulator:
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0, 0, 1)  # z-up!
         gym.add_ground(sim, plane_params)
+
+        # Add a viewer in graphical mode
+        if not headless:
+            viewer = gym.create_viewer(sim, gymapi.CameraProperties())
+            if viewer is None:
+                print("*** Failed to create viewer")
+                quit()
+            cam_pos = gymapi.Vec3(-4.0, -1.0, 4.0)
+            cam_target = gymapi.Vec3(0.0, 1.0, 2.0)
+            gym.viewer_camera_look_at(viewer, None, cam_pos, cam_target)
 
         robot_asset = load_terrasentia(gym, sim)  # Load robot asset
 
@@ -442,25 +449,45 @@ class Simulator:
 
             frame_count += 1
             sim_handle.update_frame_count()
+
+            # Draw viewer for graphical mode
+            if not args.headless:
+                # render the viewer
+                gym.draw_viewer(viewer, sim, True)
+
+                # Wait for dt to elapse in real time to sync viewer with
+                # simulation rate. Not necessary in headless.
+                gym.sync_frame_time(sim)
+
+                # Check for exit condition - user closed the viewer window
+                if gym.query_viewer_has_closed(viewer):
+                    break
         
         self.recorder.save_robot_pose(env_idx)  # Save robot pose data as csv
 
         print(f"Shutting down env{env_idx}...")
         gym.destroy_sim(sim)  # Shut down simulator
     
-    def run(self):
+    def run(self, gym, args):
         if not os.path.exists("data"):
             os.mkdir("data")
 
-        env_num = 1
-        for i in range(env_num):
-            self.randomizer = Randomizer()
+        for i in range(args.num_envs):
+            self.randomizer = Randomizer(args.num_traj)
             self.recorder = DataRecorder()
-            self.run_simulator(i)
+            self.run_simulator(i, gym, args.headless)
 
 
 if __name__ == "__main__":
     simulator = Simulator()
-    simulator.run()
+
+    gym = gymapi.acquire_gym()  # Initialize gym
+    args = gymutil.parse_arguments(description="terrasentia_env",
+                                   headless=True,
+                                   custom_parameters=[
+                                       {"name": "--num_envs", "type": int, "default": 1, "help": "total number of environments"},
+                                       {"name": "--num_traj", "type": int, "default": 1, "help": "total number of trajectories inside every environment"}])  # Parse arguments
+  
+    simulator.run(gym, args)
 
 
